@@ -17,7 +17,6 @@ let audioContext; // 音声処理の全体を管理するオブジェクト
 let analyser;     // 周波数分析を行うためのノード
 let mediaStream;  // マイクからの音声ストリーム
 let animationFrameId; // アニメーションフレームのID（停止時に使用）
-let detector; // Pitchyのピッチ検出器
 
 // 最高音と最低音の周波数を記録する変数
 let highestFrequency = 0;       // 最高周波数の初期値
@@ -60,10 +59,7 @@ startButton.addEventListener('click', async () => {
 
         // AnalyserNodeを作成し、設定を行う
         analyser = audioContext.createAnalyser();
-        analyser.fftSize = 2048; // Pitchyの推奨値または適切な値に設定
-
-        // Pitchyの検出器を初期化
-        detector = pitchy.PitchDetector.forFloat32Array(analyser.fftSize);
+        analyser.fftSize = 8192; // FFTサイズ（周波数分析の解像度）
 
         // マイクからの音声ストリームをAnalyserNodeに接続
         const microphone = audioContext.createMediaStreamSource(stream);
@@ -118,16 +114,27 @@ resetButton.addEventListener('click', () => {
 });
 
 function analyzePitch() {
-    // 波形データを格納するための配列を準備
-    const dataArray = new Float32Array(analyser.fftSize);
-    analyser.getFloatTimeDomainData(dataArray);
+    // 周波数データを格納するための配列を準備
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+    // 現在の周波数データを配列に取得
+    analyser.getByteFrequencyData(dataArray);
 
-    // Pitchyを使ってピッチとクラリティ（明瞭度）を検出
-    const [pitch, clarity] = detector.findPitch(dataArray, audioContext.sampleRate);
+    let maxAmplitude = -1; // 最大振幅（音量）
+    let peakIndex = -1;    // 最大振幅を持つ周波数のインデックス
 
-    // クラリティが一定のしきい値（0.95）を超え、ピッチが検出された場合のみ処理
-    if (clarity > 0.95 && pitch) {
-        const currentFrequency = pitch;
+    // 配列をループして、最も振幅が大きい周波数帯域を見つける
+    for (let i = 0; i < bufferLength; i++) {
+        if (dataArray[i] > maxAmplitude) {
+            maxAmplitude = dataArray[i];
+            peakIndex = i;
+        }
+    }
+    
+    // 振幅が一定のしきい値（145）を超えた場合のみ処理（ノイズ対策）
+    if (maxAmplitude > 185) {
+        // インデックスから実際の周波数（Hz）を計算
+        const currentFrequency = peakIndex * audioContext.sampleRate / analyser.fftSize;
 
         // 人間の声の周波数範囲（約80Hz〜1100Hz）に限定する
         const MIN_VOICE_FREQUENCY = 80;
