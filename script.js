@@ -21,6 +21,8 @@ let animationFrameId; // アニメーションフレームのID（停止時に�
 // 最高音と最低音の周波数を記録する変数
 let highestFrequency = 0;       // 最高周波数の初期値
 let lowestFrequency = Infinity; // 最低周波数の初期値（どんな有限の値よりも大きい）
+let highestMidiNote = 0;        // 最高音のMIDIノートナンバー
+let lowestMidiNote = 127;       // 最低音のMIDIノートナンバー（最大値127から始める）
 
 // 音名を定義した配列
 const noteStrings = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
@@ -28,11 +30,11 @@ const noteStrings = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#",
 /**
  * 周波数（Hz）を音名（例: "A4"）に変換する関数
  * @param {number} frequency - 変換したい周波数
- * @returns {string} - 計算された音名
+ * @returns {object} - 計算された音名と音階番号（MIDIノートナンバー）
  */
 function frequencyToNote(frequency) {
     // 周波数が有限でない、または0の場合は処理を中断
-    if (!isFinite(frequency) || frequency === 0) return "--";
+    if (!isFinite(frequency) || frequency === 0) return { note: "--", midiNote: 0 };
     
     // 基準音A4 (440Hz) からの相対的な音の高さを計算
     const noteNum = 12 * (Math.log2(frequency / 440));
@@ -43,8 +45,11 @@ function frequencyToNote(frequency) {
     // 12音階の中での音のインデックスを計算
     const noteIndex = roundedNoteNum % 12;
     
-    // 配列から音名を取得し、オクターブと連結して返す
-    return noteStrings[noteIndex] + octave;
+    // 配列から音名を取得し、オクターブと連結
+    const noteName = noteStrings[noteIndex] + octave;
+    
+    // 音名と音階番号（MIDIノートナンバー）を返す
+    return { note: noteName, midiNote: roundedNoteNum };
 }
 
 // 開始ボタンがクリックされたときの処理
@@ -100,18 +105,79 @@ stopButton.addEventListener('click', () => {
     stopButton.style.display = 'none';
     
     // 停止時に最高音・最低音はリセットせず、記録を保持する
+    
+    // 結果表示の下に「曲を選択する」ボタンを表示
+    showSelectSongButton();
 });
 
 // リセットボタンがクリックされたときの処理
 resetButton.addEventListener('click', () => {
     highestFrequency = 0;
     lowestFrequency = Infinity;
+    highestMidiNote = 0;
+    lowestMidiNote = 127;
 
     highestPitchSpan.textContent = `... Hz`;
     highestNoteNameSpan.textContent = "--";
     lowestPitchSpan.textContent = `... Hz`;
     lowestNoteNameSpan.textContent = "--";
+    
+    // 曲選択ボタンがあれば削除
+    const selectButton = document.getElementById('selectSongButton');
+    if (selectButton) {
+        selectButton.remove();
+    }
 });
+
+// 曲選択ボタンを表示する関数
+function showSelectSongButton() {
+    // 既存のボタンがあれば削除
+    const existingButton = document.getElementById('selectSongButton');
+    if (existingButton) {
+        existingButton.remove();
+    }
+
+    // 新しいボタンを作成
+    const selectButton = document.createElement('button');
+    selectButton.id = 'selectSongButton';
+    selectButton.innerText = '音域に合った曲を選ぶ';
+    selectButton.classList.add('select-button');
+    
+    // ボタンクリック時の処理を設定
+    selectButton.addEventListener('click', () => {
+        // select.phpにフォームを送信
+        sendDataToPHP();
+    });
+    
+    // 結果表示エリアの後にボタンを挿入
+    resultDiv.parentNode.insertBefore(selectButton, resultDiv.nextSibling);
+}
+
+// 音域データをselect.phpに送信する関数
+function sendDataToPHP() {
+    // フォームを動的に作成
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = 'select.php';
+    
+    // 最低音のMIDIノートナンバーを追加
+    const lowestInput = document.createElement('input');
+    lowestInput.type = 'hidden';
+    lowestInput.name = 'lowest_note';
+    lowestInput.value = lowestMidiNote;
+    form.appendChild(lowestInput);
+    
+    // 最高音のMIDIノートナンバーを追加
+    const highestInput = document.createElement('input');
+    highestInput.type = 'hidden';
+    highestInput.name = 'highest_note';
+    highestInput.value = highestMidiNote;
+    form.appendChild(highestInput);
+    
+    // フォームをbodyに追加して送信
+    document.body.appendChild(form);
+    form.submit();
+}
 
 function analyzePitch() {
     // 周波数データを格納するための配列を準備
@@ -130,9 +196,9 @@ function analyzePitch() {
             peakIndex = i;
         }
     }
-    
-    // 振幅が一定のしきい値（145）を超えた場合のみ処理（ノイズ対策）
-    if (maxAmplitude > 185) {
+
+    // 振幅が一定のしきい値（190）を超えた場合のみ処理（ノイズ対策）
+    if (maxAmplitude > 190) {
         // インデックスから実際の周波数（Hz）を計算
         const currentFrequency = peakIndex * audioContext.sampleRate / analyser.fftSize;
 
@@ -144,17 +210,21 @@ function analyzePitch() {
             // 現在の周波数が記録されている最高周波数より高い場合
             if (currentFrequency > highestFrequency) {
                 highestFrequency = currentFrequency;
+                const noteInfo = frequencyToNote(highestFrequency);
+                highestMidiNote = noteInfo.midiNote;
                 // UIを更新
                 highestPitchSpan.textContent = `${Math.round(highestFrequency)} Hz`;
-                highestNoteNameSpan.textContent = frequencyToNote(highestFrequency);
+                highestNoteNameSpan.textContent = noteInfo.note;
             }
 
             // 現在の周波数が0より大きく、記録されている最低周波数より低い場合
             if (currentFrequency > 0 && currentFrequency < lowestFrequency) {
                 lowestFrequency = currentFrequency;
+                const noteInfo = frequencyToNote(lowestFrequency);
+                lowestMidiNote = noteInfo.midiNote;
                 // UIを更新
                 lowestPitchSpan.textContent = `${Math.round(lowestFrequency)} Hz`;
-                lowestNoteNameSpan.textContent = frequencyToNote(lowestFrequency);
+                lowestNoteNameSpan.textContent = noteInfo.note;
             }
         }
     }
